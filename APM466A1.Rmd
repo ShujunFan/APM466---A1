@@ -1,0 +1,181 @@
+
+
+```{r}
+library(tidyverse)
+test=read.csv("APM466test.csv")
+test=test %>% 
+  mutate(diffM=12*(as.numeric(substring(maturity.date,6,9))-2022)+(as.numeric(substring(maturity.date,1,1))))
+test
+```
+
+
+
+# 4. (40 points total)
+## (a) (10 points) Ftempst, calculate each of your 10 selected bonds’ yield (yield). Then provide a welllabeled plot with a 5-year yield curve (yield curve) corresponding to each day of test superimposed on-top of each other. You may use any interpolation technique you deem appropriate provided you include a reasonable explanation for the technique used.
+
+
+```{r}
+CF=function(coupn,month,temp,price) 
+  {
+    res=floor(month/6)
+    st=100*coupn/2
+    dt=1/(1+temp/2)
+    tot = 0
+    for (i in 0:res) 
+      {
+        tot = tot + st*(dt)^i
+      }
+    tot=tot+100*(dt)^res
+    rest=month-6*res
+    dt.rest=1/(1+temp*rest/12)
+     tot = tot * dt.rest
+  
+  if (price==0) {
+    dtempty = 0
+  } else {
+    dtempty = st/6*(6-rest) + price
+  }
+  
+  return (tot-dtempty)
+}
+yield.test = c()
+
+for (i in 1:10) {
+  yield=c()
+  for (j in 5:14) {
+    sol = unirmpoot(CF,coupn=test$coupon[i], month=test$diffM[i]-(j>10)/3, price=test[i,j],
+                  lower=-1, upper=1, tol = .Machine$double.eps)
+    yield = c(yield, sol$root)
+  }
+  yield.test = rbind(yield.test, yield)  
+}
+mt = test$diffM/12
+mt = c(0, mt)
+yield.test = rbind(rep(0, 10), yield.test)
+matplot(mt, yield.test, type='l', col=1:10, ylab='yield', xlab='year',
+        main='5-year yield curve')
+legend('right',colnames(test)[5:14], col=1:10, lty=1:10, cex=0.7)
+
+```
+
+
+# (b) (15 points) Write a pseudo-code (explanation of an algorithm) for how you would derive the spot curve with terms ranging from 1-5 years from your chosen bonds in part 2. (Please recall the day convention foward.firmplifications provided in part 2 as well.) Then provide a well-labeled plot with a 5-year spot curve corresponding to each day of data superimposed on-top of each other.
+
+
+
+```{r}
+sec = function(month, temp) {
+  n=floor(month/6)
+  dt = 1/(1+temp/2)
+  rest = month - 6*n
+  dt.rest = 1/(1+temp*rest/12)
+  return (dt^n*dt.rest)
+}
+
+spot.test = c()
+for (j in 1:10) {
+  months = c(0)
+  dts = c(1)
+  for (i in 1:10) {
+    res = floor(test$diffM[i]/6)+1
+    st = 100*test$coupon[i]/2
+    coupn.month = rev(seq(test$diffM[i], 0, -6))
+    tot = 0
+    for (k in 1:res) {
+      m = coupn.month[k]
+      if (m %in% months) {
+        dt = dts[match(m, months)]
+        tot = tot + st*dt
+      } else {
+        yield = approx(mt, yield.test[,j], m/12)$y
+        p = CF(test$coupon[i], m, yield, 0)
+        dt = (p-tot)/(100+st)
+        tot = tot + st*dt
+        months = c(months, m)
+        dts = c(dts, dt)
+      }
+    }
+  }
+  
+  spot = c()
+  for (l in 2:length(dts)) {
+    f = function(y) {return (sec(months[l], y)-dts[l])}
+    sol = uniroot(f, lower=-1, upper=1, tol = .Machine$double.eps)
+    spot= c(spot, sol$root)
+  }
+  spot.test = cbind(spot.test, spot)
+}
+months = months[-1]
+ttest = months[months>=12]/12
+spot.data = spot.test[months>=12,]
+spot.data = spot.data[ttest %in% mt,]
+ttest = ttest[ttest %in% mt]
+matplot(ttest, spot.data, type='l', col=1:10, ylab='spot rate', xlab='year',
+        main='5-year spot curve')
+legend('right',colnames(test)[5:14], col=1:10, lty=1:10, cex=0.7)
+
+```
+
+
+
+## (c) (15 points) Write a pseudo-code for how you would derive the 1-year forward curve with terms ranging from 2-5 years from your chosen bonds in part 2 (I.e., a curve with the first point being the 1yr-1yr forward rate and the last point being the 1yr-4yr rate). Then provide a well-labeled plot with a forward curve corresponding to each day of data superimposed on-top of each other
+
+
+
+
+```{r}
+foward.test = c()
+
+for (j in 1:10) {
+  foward = c()
+  for (i in 1:4) {
+    foward.fir = approx(ttest, spot.data[,j], i)$y
+    foward.sec = approx(ttest, spot.data[,j], i+1)$y
+    foward.thi = (1+foward.fir/2)^(2*i)
+    foward.for = (1+foward.sec/2)^(2*i+2)
+    foward.fif = (sqrt(foward.for/foward.thi)-1)*2
+    foward.six = c(foward.six, foward.fif)
+  }  
+  
+  foward.test = cbind(foward.test, foward.six)
+}
+
+matplot(1:4, foward.test, type='l', col=1:10, ylab='forward rate', xlab='',
+        main='foward curve', xaxt="n")
+axis(1, at=1:4, labels=c('1yr-1yr', '1yr-2yr', '1yr-3yr', '1yr-4yr'))
+legend('right',colnames(test)[5:14], col=1:10, lty=1:10, cex=0.7)
+
+```
+
+
+# 5. Calculate two covariance matrices for the time series of daily log-returns of yield, andforward rates (no spot rates).
+
+```{r}
+Calculation = c()
+for (j in 1:10) 
+  {
+  Calculation = cbind(Calculation, approx(mt, yield.test[,j], 1:5)$y)
+}
+var.x = log(Calculation[,2:10]/Calculation[,1:9])
+covariance = cov(t(var.x))
+round(covariance, 4)
+Calculation2 = foward.test
+var.x2 = log(Calculation2[,2:10]/Calculation2[,1:9])
+covariance2 = cov(t(var.x2))
+round(covariance2, 4)
+```
+
+
+
+# 6. (15 points) Calculate the eigenvalues and eigenvectors of both covariance matrices, and in one sentence, explain what the first (in terms of size) eigenvalue and its associated
+
+
+```{r}
+eigen(covariance)
+eigen.test = eigen(covariance)$values
+eigen.test/sum(eigen.test)
+eigen(covariance2)
+eigen.test2 = eigen(covariance2)$values
+eigen.test2/sum(eigen.test2)
+```
+
